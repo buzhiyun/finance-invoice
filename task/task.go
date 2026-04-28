@@ -56,16 +56,22 @@ func (t *BatchTask) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// ExcelGenerator abstracts Excel generation to avoid circular imports.
+type ExcelGenerator interface {
+	Generate(t *BatchTask, outputPath string) error
+}
+
 type Manager struct {
 	mu        sync.RWMutex
 	tasks     map[string]*BatchTask
 	zhipu     *zhipu.Client
+	excelGen  ExcelGenerator
 	semaphore chan struct{}
 	outputDir string
 	tmpDir    string
 }
 
-func NewManager(zhipuClient *zhipu.Client, maxConcurrent int) (*Manager, error) {
+func NewManager(zhipuClient *zhipu.Client, excelGen ExcelGenerator, maxConcurrent int) (*Manager, error) {
 	outputDir := "output"
 	tmpDir := "tmp"
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -78,6 +84,7 @@ func NewManager(zhipuClient *zhipu.Client, maxConcurrent int) (*Manager, error) 
 	return &Manager{
 		tasks:     make(map[string]*BatchTask),
 		zhipu:     zhipuClient,
+		excelGen:  excelGen,
 		semaphore: make(chan struct{}, maxConcurrent),
 		outputDir: outputDir,
 		tmpDir:    tmpDir,
@@ -175,13 +182,20 @@ func (tm *Manager) processTask(task *BatchTask) {
 	}
 
 	excelPath := filepath.Join(tm.outputDir, fmt.Sprintf("invoice_%s.xlsx", task.ID))
+	if err := tm.excelGen.Generate(task, excelPath); err != nil {
+		task.Error = fmt.Sprintf("generate excel failed: %v", err)
+		tm.updateTaskStatus(task, "failed")
+		log.Printf("[Task %s] Excel生成失败: %v", task.ID, err)
+		return
+	}
+
 	task.ExcelPath = excelPath
 	if hasFailed {
 		tm.updateTaskStatus(task, "partial_failed")
-		log.Printf("[Task %s] 部分完成(有失败页), Excel待生成: %s", task.ID, excelPath)
+		log.Printf("[Task %s] 部分完成(有失败页), Excel已生成: %s", task.ID, excelPath)
 	} else {
 		tm.updateTaskStatus(task, "completed")
-		log.Printf("[Task %s] 全部完成, Excel待生成: %s", task.ID, excelPath)
+		log.Printf("[Task %s] 全部完成, Excel已生成: %s", task.ID, excelPath)
 	}
 }
 

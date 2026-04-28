@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -55,6 +56,7 @@ func IPWhitelist(allowedNets []*net.IPNet) gin.HandlerFunc {
 			}
 		}
 
+		log.Printf("[IP白名单] 拦截访问: IP=%s, 方法=%s, 路径=%s", clientIP, c.Request.Method, c.Request.URL.Path)
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "IP not allowed"})
 	}
 }

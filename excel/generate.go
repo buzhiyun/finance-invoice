@@ -36,7 +36,9 @@ var colWidths = []float64{
 	10, // Q 识别状态
 }
 
-func Generate(t *task.BatchTask, outputPath string) error {
+type Generator struct{}
+
+func (g *Generator) Generate(t *task.BatchTask, outputPath string) error {
 	f := excelize.NewFile()
 	defer f.Close()
 

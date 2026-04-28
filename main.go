@@ -6,6 +6,7 @@ import (
 
 	"github.com/buzhiyun/finance-invoice/auth"
 	"github.com/buzhiyun/finance-invoice/config"
+	"github.com/buzhiyun/finance-invoice/excel"
 	"github.com/buzhiyun/finance-invoice/handler"
 	"github.com/buzhiyun/finance-invoice/middleware"
 	"github.com/buzhiyun/finance-invoice/task"
@@ -26,7 +27,7 @@ func main() {
 
 	zhipuClient := zhipu.NewClient(cfg.ZhipuAPIKey)
 
-	taskManager, err := task.NewManager(zhipuClient, cfg.MaxConcurrent)
+	taskManager, err := task.NewManager(zhipuClient, &excel.Generator{}, cfg.MaxConcurrent)
 	if err != nil {
 		log.Fatalf("create task manager: %v", err)
 	}
