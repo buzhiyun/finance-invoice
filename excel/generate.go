@@ -17,14 +17,14 @@ var headers = []string{
 }
 
 var colWidths = []float64{
-	18, // A 发票类型
+	26, // A 发票类型
 	28, // B 发票号码
 	16, // C 开票日期
 	30, // D 购方名称
 	26, // E 购方统一社会信用代码
 	30, // F 销方名称
 	26, // G 销方统一社会信用代码
-	20, // H 项目名称
+	28, // H 项目名称
 	12, // I 金额
 	8,  // J 税率
 	12, // K 税额
@@ -51,7 +51,7 @@ func (g *Generator) Generate(t *task.BatchTask, outputPath string) error {
 
 	headerStyle, err := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Size: 11},
-		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#4472C4"}},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#B5CDE1"}},
 		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
 		Border:    []excelize.Border{{Type: "left", Color: "000000", Style: 1}, {Type: "top", Color: "000000", Style: 1}, {Type: "bottom", Color: "000000", Style: 1}, {Type: "right", Color: "000000", Style: 1}},
 	})
