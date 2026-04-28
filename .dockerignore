@@ -1,0 +1,6 @@
+tmp/
+output/
+finance-invoice
+*.pdf
+.claude/
+finance-invoice

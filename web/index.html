@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>发票识别系统</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; }
+.container { max-width: 960px; margin: 0 auto; padding: 20px; }
+h1 { text-align: center; margin: 30px 0; color: #1a1a2e; font-size: 28px; }
+.card { background: #fff; border-radius: 12px; padding: 30px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.card h2 { margin-bottom: 20px; color: #1a1a2e; font-size: 20px; border-bottom: 2px solid #4472c4; padding-bottom: 10px; }
+.login-box { max-width: 400px; margin: 80px auto; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; margin-bottom: 6px; font-weight: 500; }
+.form-group input { width: 100%; padding: 10px 14px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; transition: border-color 0.3s; }
+.form-group input:focus { outline: none; border-color: #4472c4; box-shadow: 0 0 0 2px rgba(68,114,196,0.2); }
+.btn { padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.3s; }
+.btn-primary { background: #4472c4; color: #fff; }
+.btn-primary:hover { background: #365f9e; }
+.btn-primary:disabled { background: #a0b4d8; cursor: not-allowed; }
+.btn-danger { background: #ff4d4f; color: #fff; margin-left: 12px; }
+.btn-danger:hover { background: #d9363e; }
+.btn-sm { padding: 6px 16px; font-size: 13px; }
+.btn-ghost { background: transparent; color: #999; border: 1px solid #d9d9d9; }
+.btn-ghost:hover { color: #ff4d4f; border-color: #ff4d4f; }
+.upload-zone { border: 2px dashed #d9d9d9; border-radius: 10px; padding: 40px; text-align: center; cursor: pointer; transition: border-color 0.3s; }
+.upload-zone:hover, .upload-zone.dragover { border-color: #4472c4; background: #f0f5ff; }
+.upload-zone p { margin: 8px 0; color: #666; }
+.upload-zone .icon { font-size: 48px; color: #4472c4; }
+#file-input { display: none; }
+.file-list { margin-top: 16px; }
+.file-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #fafafa; border-radius: 6px; margin-bottom: 6px; }
+.file-item .name { color: #333; }
+.file-item .size { color: #999; font-size: 13px; }
+.task-list { margin-top: 12px; }
+.task-item { padding: 14px; border: 1px solid #e8e8e8; border-radius: 8px; margin-bottom: 10px; }
+.task-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.task-id { font-weight: 600; color: #1a1a2e; }
+.task-time { color: #999; font-size: 13px; }
+.status { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+.status-pending { background: #fff7e6; color: #d48806; }
+.status-processing { background: #e6f7ff; color: #096dd9; }
+.status-completed { background: #f6ffed; color: #52c41a; }
+.status-failed { background: #fff2f0; color: #ff4d4f; }
+.status-partial_failed { background: #fff7e6; color: #fa8c16; }
+.task-files { font-size: 13px; color: #666; }
+.task-actions { margin-top: 8px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.toolbar .user-info { font-size: 14px; color: #666; }
+.progress-bar { height: 4px; background: #e8e8e8; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.progress-bar .fill { height: 100%; background: #4472c4; border-radius: 2px; transition: width 0.3s; }
+.empty { text-align: center; padding: 40px; color: #999; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>发票识别系统</h1>
+
+  <!-- Login -->
+  <div id="login-section" class="login-box card">
+    <h2>用户登录</h2>
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="username" placeholder="请输入用户名">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="password" placeholder="请输入密码">
+    </div>
+    <div id="login-error" style="color:#ff4d4f;margin-bottom:12px;display:none;"></div>
+    <button class="btn btn-primary" onclick="login()" style="width:100%">登 录</button>
+  </div>
+
+  <!-- Main App -->
+  <div id="app-section" style="display:none">
+    <div class="toolbar">
+      <span class="user-info" id="user-display"></span>
+      <button class="btn btn-danger btn-sm" onclick="logout()">退出登录</button>
+    </div>
+
+    <!-- Upload -->
+    <div class="card">
+      <h2>上传发票</h2>
+      <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+        <div class="icon">📄</div>
+        <p>点击或拖拽PDF发票文件到此处</p>
+        <p style="font-size:13px;color:#aaa">支持批量上传，仅限PDF格式</p>
+      </div>
+      <input type="file" id="file-input" multiple accept=".pdf">
+      <div id="upload-bar" style="margin-top:16px;display:none">
+        <button class="btn btn-primary" id="upload-btn" onclick="uploadFiles()">开始识别</button>
+        <span id="file-count" style="margin-left:12px;font-size:13px;color:#666"></span>
+      </div>
+      <div class="file-list" id="file-list"></div>
+    </div>
+
+    <!-- Tasks -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #4472c4;padding-bottom:10px">
+        <h2 style="margin:0;border:none;padding:0">任务列表</h2>
+        <button class="btn btn-ghost btn-sm" onclick="clearTasks()">清理已完成</button>
+      </div>
+      <div id="task-list" class="task-list">
+        <div class="empty">暂无任务</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let token = localStorage.getItem('token');
+let selectedFiles = [];
+let pollTimer = null;
+
+function checkAuth() {
+  if (token) {
+    document.getElementById('login-section').style.display = 'none';
+    document.getElementById('app-section').style.display = 'block';
+    loadTasks();
+    startPolling();
+  }
+}
+
+async function login() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value.trim();
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+
+  if (!username || !password) {
+    errEl.textContent = '请输入用户名和密码';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      token = data.token;
+      localStorage.setItem('token', token);
+      checkAuth();
+    } else {
+      errEl.textContent = data.error || '登录失败';
+      errEl.style.display = 'block';
+    }
+  } catch (e) {
+    errEl.textContent = '网络错误';
+    errEl.style.display = 'block';
+  }
+}
+
+function logout() {
+  token = null;
+  localStorage.removeItem('token');
+  document.getElementById('login-section').style.display = 'block';
+  document.getElementById('app-section').style.display = 'none';
+  stopPolling();
+}
+
+async function apiFetch(url, options = {}) {
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': 'Bearer ' + token
+    }
+  });
+}
+
+// File selection
+document.getElementById('file-input').addEventListener('change', function(e) {
+  addFiles(Array.from(e.target.files));
+  e.target.value = '';
+});
+
+const uploadZone = document.getElementById('upload-zone');
+uploadZone.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  this.classList.add('dragover');
+});
+uploadZone.addEventListener('dragleave', function() {
+  this.classList.remove('dragover');
+});
+uploadZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  this.classList.remove('dragover');
+  addFiles(Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.pdf')));
+});
+
+function addFiles(files) {
+  files.forEach(f => {
+    if (!selectedFiles.find(sf => sf.name === f.name)) {
+      selectedFiles.push(f);
+    }
+  });
+  renderFileList();
+}
+
+function removeFile(index) {
+  selectedFiles.splice(index, 1);
+  renderFileList();
+}
+
+function renderFileList() {
+  const list = document.getElementById('file-list');
+  const bar = document.getElementById('upload-bar');
+  const count = document.getElementById('file-count');
+  if (selectedFiles.length === 0) {
+    list.innerHTML = '';
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'block';
+  count.textContent = '已选 ' + selectedFiles.length + ' 个文件';
+  list.innerHTML = selectedFiles.map((f, i) => `
+    <div class="file-item">
+      <span class="name">📄 ${f.name}</span>
+      <span>
+        <span class="size">${(f.size / 1024).toFixed(1)} KB</span>
+        <button class="btn btn-danger btn-sm" onclick="removeFile(${i})" style="margin-left:8px;padding:2px 8px">✕</button>
+      </span>
+    </div>
+  `).join('');
+}
+
+async function uploadFiles() {
+  if (selectedFiles.length === 0) return;
+  const btn = document.getElementById('upload-btn');
+  btn.disabled = true;
+  btn.textContent = '上传中...';
+
+  const formData = new FormData();
+  selectedFiles.forEach(f => formData.append('files', f));
+
+  try {
+    const res = await apiFetch('/api/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (res.ok) {
+      selectedFiles = [];
+      renderFileList();
+      loadTasks();
+    } else {
+      alert(data.error || '上传失败');
+    }
+  } catch (e) {
+    alert('网络错误');
+  }
+  btn.disabled = false;
+  btn.textContent = '开始识别';
+}
+
+async function loadTasks() {
+  try {
+    const res = await apiFetch('/api/tasks');
+    if (res.status === 401) { logout(); return; }
+    const data = await res.json();
+    renderTasks(data.tasks || []);
+  } catch (e) {}
+}
+
+function renderTasks(tasks) {
+  const container = document.getElementById('task-list');
+  if (!tasks.length) {
+    container.innerHTML = '<div class="empty">暂无任务</div>';
+    return;
+  }
+
+  tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  container.innerHTML = tasks.map(t => {
+    const statusMap = {
+      pending: '等待中', processing: '处理中', completed: '已完成',
+      failed: '失败', partial_failed: '部分失败'
+    };
+    const totalPages = t.files ? t.files.reduce((s, f) => s + (f.pages ? f.pages.length : 0), 0) : 0;
+    const donePages = t.files ? t.files.reduce((s, f) => s + (f.pages ? f.pages.filter(p => p.status === 'success' || p.status === 'failed').length : 0), 0) : 0;
+    const progress = totalPages > 0 ? Math.round(donePages / totalPages * 100) : 0;
+    const fileNames = t.files ? t.files.map(f => f.filename).join(', ') : '';
+    const canDownload = t.has_excel;
+
+    return `
+      <div class="task-item">
+        <div class="task-header">
+          <span class="task-id">任务 #${t.id}</span>
+          <span>
+            <span class="task-time">${new Date(t.created_at).toLocaleString()}</span>
+            <span class="status status-${t.status}">${statusMap[t.status] || t.status}</span>
+          </span>
+        </div>
+        <div class="task-files">文件: ${fileNames}</div>
+        <div style="font-size:13px;color:#666;margin-top:4px">进度: ${donePages}/${totalPages} 页</div>
+        <div class="progress-bar"><div class="fill" style="width:${progress}%"></div></div>
+        ${canDownload ? `<div class="task-actions"><a href="/api/tasks/${t.id}/download" class="btn btn-primary btn-sm" style="text-decoration:none">下载Excel</a></div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(loadTasks, 3000);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+// Auto-download link needs auth token
+document.addEventListener('click', function(e) {
+  if (e.target.tagName === 'A' && e.target.href && e.target.href.includes('/download')) {
+    e.preventDefault();
+    downloadExcel(e.target.href);
+  }
+});
+
+async function downloadExcel(url) {
+  try {
+    const res = await apiFetch(url);
+    if (!res.ok) { alert('下载失败'); return; }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    let filename = '识别结果.xlsx';
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?(.+)/i);
+    if (match) {
+      filename = decodeURIComponent(match[1].replace(/["']/g, ''));
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    alert('下载失败');
+  }
+}
+
+async function clearTasks() {
+  if (!confirm('确定清理所有已完成的任务？')) return;
+  try {
+    const res = await apiFetch('/api/tasks/clear', { method: 'POST' });
+    if (res.ok) { loadTasks(); }
+  } catch (e) {}
+}
+
+checkAuth();
+</script>
+</body>
+</html>
