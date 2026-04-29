@@ -36,6 +36,23 @@ var colWidths = []float64{
 	10, // Q 识别状态
 }
 
+// validateCol indicates which columns need PDF text cross-validation.
+// Indices correspond to the headers slice above.
+var validateCol = map[int]bool{
+	1:  true, // 发票号码
+	2:  true, // 开票日期
+	3:  true, // 购方名称
+	4:  true, // 购方统一社会信用代码
+	5:  true, // 销方名称
+	6:  true, // 销方统一社会信用代码
+	8:  true, // 金额
+	9:  true, // 税率
+	10: true, // 税额
+	11: true, // 价税合计（大写）
+	12: true, // （小写）
+	14: true, // 开票人
+}
+
 type Generator struct{}
 
 func (g *Generator) Generate(t *task.BatchTask, outputPath string) error {
@@ -65,6 +82,17 @@ func (g *Generator) Generate(t *task.BatchTask, outputPath string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("create cell style: %w", err)
+	}
+
+	// Warning style for cells that fail PDF text validation
+	warningStyle, err := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Color: "#9C5700"},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#FFC000"}},
+		Alignment: &excelize.Alignment{Vertical: "center", WrapText: true},
+		Border:    []excelize.Border{{Type: "left", Color: "000000", Style: 1}, {Type: "top", Color: "000000", Style: 1}, {Type: "bottom", Color: "000000", Style: 1}, {Type: "right", Color: "000000", Style: 1}},
+	})
+	if err != nil {
+		return fmt.Errorf("create warning style: %w", err)
 	}
 
 	for i, h := range headers {
@@ -104,7 +132,12 @@ func (g *Generator) Generate(t *task.BatchTask, outputPath string) error {
 			for i, v := range values {
 				cell, _ := excelize.CoordinatesToCellName(i+1, row)
 				f.SetCellValue(sheet, cell, v)
-				f.SetCellStyle(sheet, cell, cell, cellStyle)
+
+				if validateCol[i] && !task.FieldMatchesPDFText(v, pr.PDFText) {
+					f.SetCellStyle(sheet, cell, cell, warningStyle)
+				} else {
+					f.SetCellStyle(sheet, cell, cell, cellStyle)
+				}
 			}
 			row++
 		}

@@ -29,6 +29,7 @@ type PageResult struct {
 	Fields     InvoiceFields `json:"fields"`
 	Error      string        `json:"error,omitempty"`
 	PageFile   string        // temp file path, not serialized
+	PDFText    []string      // PDF raw text for validation, not serialized
 }
 
 type FileTask struct {
@@ -221,6 +222,8 @@ func (tm *Manager) processPage(taskID, filename string, pr *PageResult) {
 		log.Printf("%s 失败: 读取临时文件出错: %v", pageTag, err)
 		return
 	}
+
+	pr.PDFText = extractPDFText(pr.PageFile)
 
 	var lastErr error
 	for attempt := 0; attempt <= MaxRetries; attempt++ {
