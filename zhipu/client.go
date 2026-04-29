@@ -6,45 +6,21 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	uploadURL = "https://bigmodel.cn/api/biz/file/uploadTemporaryImage"
-	chatURL   = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-	Model     = "glm-5v-turbo"
+	ocrURL    = "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
+	Model     = "glm-ocr"
 )
-
-var invoicePrompt = `你是一个专业的发票识别助手。请仔细识别这张发票图片，提取以下信息并以JSON格式返回。只返回JSON对象，不要返回任何其他内容。
-
-重要提示：
-- 发票号码通常在发票右上角区域，标注为"发票号码"，是一串20位数字（全电发票）或8位数字（传统发票），请务必仔细查找并完整提取
-- 全电发票（电子发票）的发票号码为20位纯数字
-- 传统增值税发票的发票号码为8位纯数字
-- 注意区分"发票号码"和"发票代码"，发票代码通常更长且在前方，发票号码是我们需要的字段
-
-字段说明：
-- invoice_type: 发票类型（如：电子发票（普通发票）、增值税电子普通发票、增值税专用发票等，按票面实际印制名称填写）
-- invoice_number: 发票号码（全电发票为20位数字，传统发票为8位数字，必须完整提取）
-- invoice_date: 开票日期（格式：YYYY年MM月DD日）
-- buyer_name: 购买方名称
-- buyer_tax_id: 购买方统一社会信用代码/纳税人识别号
-- seller_name: 销售方名称
-- seller_tax_id: 销售方统一社会信用代码/纳税人识别号
-- item_name: 项目名称（如有多个项目，用顿号分隔）
-- amount: 金额（不含税）
-- tax_rate: 税率（如：6%、9%、13%、1%）
-- tax_amount: 税额
-- total_upper: 价税合计（大写）
-- total_lower: 价税合计（小写/阿拉伯数字）
-- remarks: 备注
-- issuer: 开票人
-
-如果某个字段确实无法识别，请返回空字符串。`
 
 type InvoiceFields struct {
 	InvoiceType   string `json:"invoice_type"`
@@ -64,6 +40,24 @@ type InvoiceFields struct {
 	Issuer        string `json:"issuer"`
 }
 
+type OCRResponse struct {
+	ID            string         `json:"id"`
+	Model         string         `json:"model"`
+	LayoutDetails [][]LayoutItem `json:"layout_details"`
+	MDResults     string         `json:"md_results"`
+	Error         *struct {
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	} `json:"error"`
+}
+
+type LayoutItem struct {
+	Content     string `json:"content"`
+	Index       int    `json:"index"`
+	Label       string `json:"label"`
+	NativeLabel string `json:"native_label"`
+}
+
 type Client struct {
 	APIKey     string
 	HTTPClient *http.Client
@@ -73,7 +67,7 @@ func NewClient(apiKey string) *Client {
 	return &Client{
 		APIKey: apiKey,
 		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 180 * time.Second,
 		},
 	}
 }
@@ -143,23 +137,7 @@ func (c *Client) UploadFile(filename string, data []byte) (string, error) {
 func (c *Client) RecognizeInvoice(fileURL string) (*InvoiceFields, error) {
 	reqBody := map[string]any{
 		"model": Model,
-		"messages": []map[string]any{
-			{
-				"role": "user",
-				"content": []map[string]any{
-					{
-						"type": "file_url",
-						"file_url": map[string]string{
-							"url": fileURL,
-						},
-					},
-					{
-						"type": "text",
-						"text": invoicePrompt,
-					},
-				},
-			},
-		},
+		"file":  fileURL,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -167,71 +145,247 @@ func (c *Client) RecognizeInvoice(fileURL string) (*InvoiceFields, error) {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", chatURL, bytes.NewReader(jsonData))
+	req, err := http.NewRequest("POST", ocrURL, bytes.NewReader(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("create chat request: %w", err)
+		return nil, fmt.Errorf("create OCR request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("chat request: %w", err)
+		return nil, fmt.Errorf("OCR request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read chat response: %w", err)
+		return nil, fmt.Errorf("read OCR response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("chat failed (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("OCR failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Error *struct {
-			Message string `json:"message"`
-			Code    string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(body, &chatResp); err != nil {
-		return nil, fmt.Errorf("parse chat response: %w, body: %s", err, string(body))
+	var ocrResp OCRResponse
+	if err := json.Unmarshal(body, &ocrResp); err != nil {
+		return nil, fmt.Errorf("parse OCR response: %w, body: %s", err, string(body))
 	}
 
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("API error [%s]: %s", chatResp.Error.Code, chatResp.Error.Message)
+	if ocrResp.Error != nil {
+		return nil, fmt.Errorf("OCR API error [%s]: %s", ocrResp.Error.Code, ocrResp.Error.Message)
 	}
 
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("no response from model")
+	if ocrResp.MDResults == "" && len(ocrResp.LayoutDetails) == 0 {
+		return nil, fmt.Errorf("OCR returned empty results")
 	}
 
-	content := chatResp.Choices[0].Message.Content
-	log.Printf("[Zhipu] 模型原始输出: %s", content)
-	return parseInvoiceFields(content)
+	log.Printf("[Zhipu] OCR原始返回: %s", string(body))
+
+	return extractInvoiceFields(&ocrResp)
 }
 
-func parseInvoiceFields(content string) (*InvoiceFields, error) {
-	jsonStr := content
-	if idx := strings.Index(content, "{"); idx >= 0 {
-		endIdx := strings.LastIndex(content, "}")
-		if endIdx > idx {
-			jsonStr = content[idx : endIdx+1]
+var (
+	reInvoiceNumber = regexp.MustCompile(`发票号码[：:]\s*(\d+)`)
+	reInvoiceDate   = regexp.MustCompile(`开票日期[：:]\s*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)`)
+	reTaxID         = regexp.MustCompile(`(?:统一社会信用代码[/／]纳税人识别号|纳税人识别号|统一社会信用代码)[：:]\s*([A-Za-z0-9]{15,20})`)
+	reName          = regexp.MustCompile(`名称[：:][ \t]*(.+?)[ \t]*(?:统一社会|纳税人|项目名称|\n)`)
+	reItemName      = regexp.MustCompile(`(\*[^*]+\*[^*¥\n]+)`)
+	reAmountLine    = regexp.MustCompile(`合\s*计\s*[¥￥]?\s*([\d,.]+)(?:\s*[¥￥]?\s*([\d,.]+))?`)
+	reTaxRate       = regexp.MustCompile(`(?:税率|征收率)[：:/／]*\s*(\d{1,2}%)`)
+	reTotalUpper    = regexp.MustCompile(`[⊗⊙○]?\s*([零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元整角分]+)`)
+	reTotalLower    = regexp.MustCompile(`小写[）)）]*[：:]*\s*[¥￥]?\s*([\d,.]+)`)
+	reRemarks       = regexp.MustCompile(`备注[：:]*[ \t]*(.+)`)
+	reIssuer        = regexp.MustCompile(`开票人[：:]\s*(.+)`)
+	reHTMLTag       = regexp.MustCompile(`<[^>]+>`)
+	reImgRef        = regexp.MustCompile(`!\[.*?\]\(.*?\)`)
+	reMultiSpace    = regexp.MustCompile(`[ \t]+`)
+	reMultiNewline  = regexp.MustCompile(`\n{3,}`)
+	reBR            = regexp.MustCompile(`<br\s*/?>`)
+	reTRClose       = regexp.MustCompile(`</tr>`)
+	reTHClose       = regexp.MustCompile(`</th>`)
+	reTDClose       = regexp.MustCompile(`</td>`)
+	reHeadClose     = regexp.MustCompile(`</thead>`)
+	reBodyClose     = regexp.MustCompile(`</tbody>`)
+)
+
+func extractInvoiceFields(ocrResp *OCRResponse) (*InvoiceFields, error) {
+	text := stripHTMLTags(ocrResp.MDResults)
+	fields := &InvoiceFields{}
+
+	for _, page := range ocrResp.LayoutDetails {
+		for _, item := range page {
+			if item.NativeLabel == "figure_title" {
+				fields.InvoiceType = strings.TrimSpace(stripHTMLTags(item.Content))
+			}
 		}
 	}
 
-	var fields InvoiceFields
-	if err := json.Unmarshal([]byte(jsonStr), &fields); err != nil {
-		return nil, fmt.Errorf("parse invoice fields: %w, content: %s", err, content)
+	if m := reInvoiceNumber.FindStringSubmatch(text); len(m) > 1 {
+		fields.InvoiceNumber = m[1]
 	}
 
-	return &fields, nil
+	if m := reInvoiceDate.FindStringSubmatch(text); len(m) > 1 {
+		fields.InvoiceDate = strings.ReplaceAll(m[1], " ", "")
+	}
+
+	extractBuyerSeller(text, fields)
+
+	itemMatches := reItemName.FindAllStringSubmatch(text, -1)
+	if len(itemMatches) > 0 {
+		var items []string
+		for _, m := range itemMatches {
+			items = append(items, strings.TrimSpace(m[1]))
+		}
+		fields.ItemName = strings.Join(items, "、")
+	}
+
+	if m := reAmountLine.FindStringSubmatch(text); len(m) > 1 {
+		fields.Amount = m[1]
+		if len(m) > 2 && m[2] != "" {
+			fields.TaxAmount = m[2]
+		}
+	}
+
+	if m := reTaxRate.FindStringSubmatch(text); len(m) > 1 {
+		fields.TaxRate = m[1]
+	} else {
+		fields.TaxRate = computeTaxRate(fields.Amount, fields.TaxAmount)
+	}
+
+	if m := reTotalUpper.FindStringSubmatch(text); len(m) > 1 {
+		fields.TotalUpper = m[1]
+	}
+
+	if m := reTotalLower.FindStringSubmatch(text); len(m) > 1 {
+		fields.TotalLower = "¥" + m[1]
+	}
+
+	if m := reRemarks.FindStringSubmatch(text); len(m) > 1 {
+		fields.Remarks = strings.TrimSpace(m[1])
+	}
+
+	if m := reIssuer.FindStringSubmatch(text); len(m) > 1 {
+		fields.Issuer = strings.TrimSpace(m[1])
+	}
+
+	log.Printf("[Zhipu] 提取结果: 类型=%s, 号码=%s, 日期=%s, 购方=%s, 购方税号=%s, 销方=%s, 销方税号=%s, 项目=%s, 金额=%s, 税率=%s, 税额=%s, 大写=%s, 小写=%s, 备注=%s, 开票人=%s",
+		fields.InvoiceType, fields.InvoiceNumber, fields.InvoiceDate,
+		fields.BuyerName, fields.BuyerTaxID, fields.SellerName, fields.SellerTaxID,
+		fields.ItemName, fields.Amount, fields.TaxRate, fields.TaxAmount,
+		fields.TotalUpper, fields.TotalLower, fields.Remarks, fields.Issuer)
+
+	return fields, nil
+}
+
+func extractBuyerSeller(text string, fields *InvoiceFields) {
+	buyerSection, sellerSection := splitBuyerSeller(text)
+
+	if m := reName.FindStringSubmatch(buyerSection); len(m) > 1 {
+		fields.BuyerName = strings.TrimSpace(m[1])
+	}
+	if m := reTaxID.FindStringSubmatch(buyerSection); len(m) > 1 {
+		fields.BuyerTaxID = m[1]
+	}
+
+	if m := reName.FindStringSubmatch(sellerSection); len(m) > 1 {
+		fields.SellerName = strings.TrimSpace(m[1])
+	}
+	if m := reTaxID.FindStringSubmatch(sellerSection); len(m) > 1 {
+		fields.SellerTaxID = m[1]
+	}
+
+	// Fallback: OCR sometimes drops the "销售方信息" cell, so "销售方" keyword
+	// is missing and sellerSection is empty. In that case, find all "名称" and
+	// tax ID occurrences in the full text and use the 2nd match for seller.
+	if fields.SellerName == "" || fields.BuyerName == "" {
+		nameMatches := reName.FindAllStringSubmatch(text, -1)
+		if len(nameMatches) >= 1 && fields.BuyerName == "" {
+			fields.BuyerName = strings.TrimSpace(nameMatches[0][1])
+		}
+		if len(nameMatches) >= 2 && fields.SellerName == "" {
+			fields.SellerName = strings.TrimSpace(nameMatches[1][1])
+		}
+
+		taxIDMatches := reTaxID.FindAllStringSubmatch(text, -1)
+		if len(taxIDMatches) >= 1 && fields.BuyerTaxID == "" {
+			fields.BuyerTaxID = taxIDMatches[0][1]
+		}
+		if len(taxIDMatches) >= 2 && fields.SellerTaxID == "" {
+			fields.SellerTaxID = taxIDMatches[1][1]
+		}
+	}
+}
+
+func splitBuyerSeller(text string) (buyer, seller string) {
+	buyerIdx := firstIndex(text, "购买方", "购方")
+	sellerIdx := firstIndex(text, "销售方", "销方")
+
+	if buyerIdx < 0 && sellerIdx < 0 {
+		return "", ""
+	}
+
+	if buyerIdx >= 0 && sellerIdx >= 0 && sellerIdx > buyerIdx {
+		buyer = text[buyerIdx:sellerIdx]
+		seller = text[sellerIdx:]
+	} else if buyerIdx >= 0 {
+		buyer = text[buyerIdx:]
+	} else {
+		seller = text[sellerIdx:]
+	}
+
+	return
+}
+
+func firstIndex(s string, subs ...string) int {
+	minIdx := -1
+	for _, sub := range subs {
+		if i := strings.Index(s, sub); i >= 0 {
+			if minIdx < 0 || i < minIdx {
+				minIdx = i
+			}
+		}
+	}
+	return minIdx
+}
+
+func computeTaxRate(amountStr, taxAmountStr string) string {
+	amount, err1 := strconv.ParseFloat(strings.ReplaceAll(amountStr, ",", ""), 64)
+	taxAmount, err2 := strconv.ParseFloat(strings.ReplaceAll(taxAmountStr, ",", ""), 64)
+	if err1 != nil || err2 != nil || amount <= 0 {
+		return ""
+	}
+	rate := taxAmount / amount * 100
+	for _, r := range []float64{1, 3, 5, 6, 9, 10, 13} {
+		if math.Abs(rate-r) < 0.5 {
+			return fmt.Sprintf("%.0f%%", r)
+		}
+	}
+	return ""
+}
+
+func stripHTMLTags(s string) string {
+	// Replace <br> with space before removing tags
+	s = reBR.ReplaceAllString(s, " ")
+	// Preserve table structure boundaries
+	s = reTRClose.ReplaceAllString(s, "\n")
+	s = reTHClose.ReplaceAllString(s, " ")
+	s = reTDClose.ReplaceAllString(s, " ")
+	s = reHeadClose.ReplaceAllString(s, "\n")
+	s = reBodyClose.ReplaceAllString(s, "\n")
+	// Remove all remaining HTML tags
+	s = reHTMLTag.ReplaceAllString(s, "")
+	// Remove image references
+	s = reImgRef.ReplaceAllString(s, "")
+	// Decode HTML entities
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	// Collapse whitespace
+	s = reMultiSpace.ReplaceAllString(s, " ")
+	s = reMultiNewline.ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
 }
 
 func escapeQuotes(s string) string {
