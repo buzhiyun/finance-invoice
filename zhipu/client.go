@@ -296,9 +296,10 @@ func extractBuyerSeller(text string, fields *InvoiceFields) {
 	}
 
 	// Fallback: OCR sometimes drops the "销售方信息" cell, so "销售方" keyword
-	// is missing and sellerSection is empty. In that case, find all "名称" and
+	// is missing and sellerSection is empty. Or the split succeeded but a tax ID
+	// is still missing (partial match). In that case, find all "名称" and
 	// tax ID occurrences in the full text and use the 2nd match for seller.
-	if fields.SellerName == "" || fields.BuyerName == "" {
+	if fields.SellerName == "" || fields.BuyerName == "" || fields.SellerTaxID == "" || fields.BuyerTaxID == "" {
 		nameMatches := reName.FindAllStringSubmatch(text, -1)
 		if len(nameMatches) >= 1 && fields.BuyerName == "" {
 			fields.BuyerName = strings.TrimSpace(nameMatches[0][1])
@@ -319,7 +320,7 @@ func extractBuyerSeller(text string, fields *InvoiceFields) {
 
 func splitBuyerSeller(text string) (buyer, seller string) {
 	buyerIdx := firstIndex(text, "购买方", "购方")
-	sellerIdx := firstIndex(text, "销售方", "销方")
+	sellerIdx := firstIndex(text, "销售方")
 
 	if buyerIdx < 0 && sellerIdx < 0 {
 		return "", ""
