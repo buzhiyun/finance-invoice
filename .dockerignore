@@ -4,3 +4,4 @@ finance-invoice
 *.pdf
 .claude/
 finance-invoice
+*.log
